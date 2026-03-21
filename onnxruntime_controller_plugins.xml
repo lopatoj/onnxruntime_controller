@@ -1,0 +1,11 @@
+<library path="onnxruntime_controller">
+  <class
+    name="onnxruntime_controller/ONNXRuntimeController"
+    type="onnxruntime_controller::ONNXRuntimeController"
+    base_class_type="controller_interface::ControllerInterface"
+  >
+    <description>
+      A generic ros2_control controller for ONNX Runtime inference
+    </description>
+  </class>
+</library>

@@ -1,0 +1,33 @@
+onnxruntime_controller:
+  ros__parameters:
+    observations_interfaces:
+      [
+        "imu/linear_acceleration",
+        "imu/angular_velocity",
+        "last_action",
+        "position",
+        "velocity",
+        "command/linear.x",
+        "command/linear.y",
+        "command/angular.z"
+      ]
+    observations_types:
+      [
+        "geometry_msgs/msg/Vector3",
+        "geometry_msgs/msg/Vector3",
+        "float64",
+        "float64",
+        "float64",
+        "float64",
+        "float64"
+      ]
+    actions_interface: "position"
+    reference_interfaces:
+      [
+        "command"
+      ]
+    reference_types:
+      [
+        "geometry_msgs/msg/Twist"
+      ]
+    joint_names: ["hip", "thigh", "knee"]

@@ -1,0 +1,50 @@
+onnxruntime_controller:
+  observations_interfaces:
+    {
+      type: "string_array",
+      description: "The names and order of the interfaces to use for observations.",
+      default_value: [],
+      read_only: true,
+    }
+  observations_types:
+    {
+      type: "string_array",
+      description: "The ROS2 message types of observation interfaces.",
+      default_value: [],
+      read_only: true,
+    }
+  actions_interface:
+    {
+      type: "string",
+      description: "The joint command_interface name for actions.",
+      default_value: "position",
+      read_only: true,
+    }
+  reference_interfaces:
+    {
+      type: "string_array",
+      description: "The controller reference interfaces to use as command inputs.",
+      default_value: [],
+      read_only: true,
+    }
+  reference_types:
+    {
+      type: "string_array",
+      description: "The ROS2 message types of reference interfaces.",
+      default_value: [],
+      read_only: true,
+    }
+  joint_names:
+    {
+      type: "string_array",
+      description: "The names of the joints in the order they are processed in both observations and actions.",
+      default_value: [],
+      read_only: true,
+    }
+  model_path:
+    {
+      type: "string",
+      description: "The path to the ONNX model file.",
+      default_value: "",
+      read_only: true,
+    }
