@@ -22,11 +22,11 @@ onnxruntime_controller:
         "float64"
       ]
     actions_interface: "position"
-    reference_interfaces:
+    references_interfaces:
       [
         "command"
       ]
-    reference_types:
+    references_types:
       [
         "geometry_msgs/msg/Twist"
       ]

@@ -1,15 +1,22 @@
 #include "onnxruntime_controller/onnxruntime_controller.hpp"
+#include <algorithm>
 #include <controller_interface/chainable_controller_interface.hpp>
 #include <controller_interface/controller_interface_base.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <hardware_interface/handle.hpp>
+#include <hardware_interface/hardware_info.hpp>
 #include <hardware_interface/types/hardware_interface_type_values.hpp>
 #include <iterator>
+#include <onnxruntime_cxx_api.h>
 #include <rosidl_typesupport_introspection_cpp/field_types.hpp>
 #include <vector>
 
 namespace onnxruntime_controller {
+
+ONNXRuntimeController::ONNXRuntimeController()
+    : env_(nullptr), session_(nullptr), allocator_(nullptr),
+      io_binding_(nullptr) {}
 
 std::tuple<std::vector<std::string>, controller_interface::CallbackReturn>
 ONNXRuntimeController::process_interface(std::string interface_name,
@@ -20,15 +27,24 @@ ONNXRuntimeController::process_interface(std::string interface_name,
     return {{}, controller_interface::CallbackReturn::ERROR};
   }
 
-  if (interface_name == HW_IF_LAST_ACTION) {
-    using_last_actions_ = true;
-    actions_begin_ = initial_interfaces_.end();
-    initial_interfaces_.resize(initial_interfaces_.size() + num_actions_);
-    actions_end_ = interfaces_rt_.readFromNonRT()->end() + num_actions_;
-    return {{}, controller_interface::CallbackReturn::SUCCESS};
+  // If interface name is a valid joint interface, return joint-specific
+  // interfaces
+  if (std::find(valid_joint_interfaces.begin(), valid_joint_interfaces.end(),
+                interface_name) != valid_joint_interfaces.end()) {
+    std::vector<std::string> interfaces;
+    for (auto &joint_name : joint_names_) {
+      interfaces.push_back(joint_name + "/" + interface_name);
+    }
+    return {interfaces, controller_interface::CallbackReturn::SUCCESS};
   }
 
+  // If interface type is float64, return a single interface
   if (interface_type == "float64") {
+    // Requires interface name to include prefix
+    if (std::count(interface_name.begin(), interface_name.end(), "/") != 1) {
+      return {{}, controller_interface::CallbackReturn::ERROR};
+    }
+
     return {{interface_name}, controller_interface::CallbackReturn::SUCCESS};
   }
 
@@ -49,7 +65,7 @@ ONNXRuntimeController::process_interface(std::string interface_name,
 
   std::vector<std::string> interface_names;
   std::vector<int32_t> interface_offsets;
-  std::vector<int32_t> interface_sizes;
+
   for (size_t i = 0; i < members->member_count_; ++i) {
     auto member = members->members_[i];
 
@@ -71,39 +87,23 @@ ONNXRuntimeController::process_interface(std::string interface_name,
   }
 
   if (is_reference_interface) {
-    std::vector<int64_t> observation_indexes;
-
-    for (auto &name : interface_names) {
-      auto it = std::find(observations_interfaces_.begin(),
-                          observations_interfaces_.end(), name);
-      int64_t index = it != observations_interfaces_.end()
-                          ? it - observations_interfaces_.begin()
-                          : -1;
-
-      // If the index is after the last actions interfaces, shift it to the
-      // corresponding observation index
-      if (actions_begin_ != actions_end_ &&
-          index > actions_begin_ - initial_interfaces_.begin()) {
-        index += num_actions_;
-      }
-
-      observation_indexes.push_back(index);
-    }
+    int64_t reference_index_start = references_interface_names_.size();
 
     auto subscription_callback =
-        [this, interface_sizes, interface_offsets, interface_names,
-         observation_indexes](std::shared_ptr<rclcpp::SerializedMessage> msg) {
-          std::vector<double> observations = *interfaces_rt_.readFromNonRT();
-          for (size_t i = 0; i < interface_sizes.size(); ++i) {
-            auto index = observation_indexes[i];
-            if (index != -1) {
-              // TODO: Make this work for non-double types
-              observations[index] =
-                  static_cast<double>(msg->get_rcl_serialized_message()
-                                          .buffer[interface_offsets[i]]);
-            }
+        [this, interface_offsets, interface_names, reference_index_start](
+            std::shared_ptr<rclcpp::SerializedMessage> msg) {
+          std::vector<double> references = *references_rt_.readFromNonRT();
+          for (size_t i = 0; i < interface_offsets.size(); ++i) {
+            // Get pointer to field value
+            auto ptr =
+                msg->get_rcl_serialized_message().buffer + interface_offsets[i];
+
+            // TODO: Make this work for non-double types
+            // Assign to references vector
+            references[reference_index_start + i] =
+                static_cast<double>(*((double *)ptr));
           }
-          interfaces_rt_.writeFromNonRT(observations);
+          references_rt_.writeFromNonRT(references);
         };
 
     subscriptions_.push_back(get_node()->create_generic_subscription(
@@ -112,6 +112,22 @@ ONNXRuntimeController::process_interface(std::string interface_name,
   }
 
   return {interface_names, controller_interface::CallbackReturn::SUCCESS};
+}
+
+controller_interface::CallbackReturn
+ONNXRuntimeController::validate_interface_name(std::string &interface_name) {
+  auto slash_count =
+      std::count(interface_name.begin(), interface_name.end(), "/");
+  auto period_count =
+      std::count(interface_name.begin(), interface_name.end(), ".");
+
+  if (slash_count > 1 || period_count > 1) {
+    RCLCPP_ERROR(get_node()->get_logger(), "Invalid interface name: %s",
+                 interface_name.c_str());
+    return controller_interface::CallbackReturn::ERROR;
+  }
+
+  return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::CallbackReturn ONNXRuntimeController::on_init() {
@@ -132,62 +148,63 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_init() {
     return controller_interface::CallbackReturn::ERROR;
   }
 
-  if (std::find(valid_action_interfaces.begin(), valid_action_interfaces.end(),
-                params_.actions_interface) == valid_action_interfaces.end()) {
-    RCLCPP_ERROR(get_node()->get_logger(), "Actions interface not valid: %s",
-                 params_.actions_interface.c_str());
-    return controller_interface::CallbackReturn::ERROR;
+  joint_names_ = params_.joint_names;
+
+  auto [actions_interface_names, ret] =
+      process_interface(params_.actions_interface, "", false);
+
+  if (ret != controller_interface::CallbackReturn::SUCCESS) {
+    return ret;
   }
+
+  actions_interface_ = params_.actions_interface;
+  actions_interface_names_ = actions_interface_names;
+  num_actions_ = actions_interface_names_.size();
 
   // Specify command, state, and reference interfaces
 
-  for (const auto &joint_name : params_.joint_names) {
-    actions_interfaces_.push_back(joint_name + "/" + params_.actions_interface);
-  }
-
-  num_actions_ = actions_interfaces_.size();
-
   for (size_t i = 0; i < params_.observations_interfaces.size(); ++i) {
-    auto [interfaces, res] =
+    auto ret = validate_interface_name(params_.observations_interfaces[i]);
+    if (ret != controller_interface::CallbackReturn::SUCCESS) {
+      return ret;
+    }
+
+    auto [interfaces, ret2] =
         process_interface(params_.observations_interfaces[i],
                           params_.observations_types[i], false);
-    if (res != controller_interface::CallbackReturn::SUCCESS) {
+    if (ret2 != controller_interface::CallbackReturn::SUCCESS) {
       RCLCPP_ERROR(get_node()->get_logger(),
                    "Observations interface invalid: %s",
                    params_.observations_interfaces[i].c_str());
-      return res;
+      return ret2;
     }
     if (interfaces.empty()) {
       continue;
     }
-    observations_interfaces_.insert(observations_interfaces_.end(),
-                                    interfaces.begin(), interfaces.end());
-    initial_interfaces_.resize(initial_interfaces_.size() + interfaces.size());
-    std::fill(initial_interfaces_.end() - interfaces.size(), initial_interfaces_.end(), 0.0);
+    observations_interface_names_.insert(observations_interface_names_.end(),
+                                         interfaces.begin(), interfaces.end());
   }
 
-  num_observations_ = observations_interfaces_.size();
-
-  // Adds actions interfaces to the end of initial interfaces
-  if (!using_last_actions_) {
-    actions_begin_ = initial_interfaces_.end();
-    initial_interfaces_.resize(initial_interfaces_.size() + num_actions_);
-    actions_end_ = interfaces_rt_.readFromNonRT()->end() + num_actions_;
-  }
+  num_observations_ = observations_interface_names_.size();
 
   for (size_t i = 0; i < params_.reference_interfaces.size(); ++i) {
-    auto [interfaces, res] = process_interface(
+    auto ret = validate_interface_name(params_.reference_interfaces[i]);
+    if (ret != controller_interface::CallbackReturn::SUCCESS) {
+      return ret;
+    }
+
+    auto [interfaces, ret2] = process_interface(
         params_.reference_interfaces[i], params_.reference_types[i], true);
-    if (res != controller_interface::CallbackReturn::SUCCESS) {
+    if (ret2 != controller_interface::CallbackReturn::SUCCESS) {
       RCLCPP_ERROR(get_node()->get_logger(), "Reference interface invalid: %s",
                    params_.reference_interfaces[i].c_str());
-      return res;
+      return ret2;
     }
     if (interfaces.empty()) {
       continue;
     }
-    reference_interfaces_.insert(reference_interfaces_.end(),
-                                 interfaces.begin(), interfaces.end());
+    references_interface_names_.insert(references_interface_names_.end(),
+                                       interfaces.begin(), interfaces.end());
   }
 
   return controller_interface::CallbackReturn::SUCCESS;
@@ -197,7 +214,7 @@ controller_interface::InterfaceConfiguration
 ONNXRuntimeController::command_interface_configuration() const {
   controller_interface::InterfaceConfiguration config;
   config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
-  config.names = actions_interfaces_;
+  config.names = actions_interface_names_;
   return config;
 }
 
@@ -205,58 +222,97 @@ controller_interface::InterfaceConfiguration
 ONNXRuntimeController::state_interface_configuration() const {
   controller_interface::InterfaceConfiguration config;
   config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
-  config.names = observations_interfaces_;
+  config.names = observations_interface_names_;
   return config;
-}
-
-void ONNXRuntimeController::assign_interfaces(
-    std::vector<hardware_interface::LoanedCommandInterface>
-        &&command_interfaces,
-    std::vector<hardware_interface::LoanedStateInterface> &&state_interfaces) {
-  controller_interface::ChainableControllerInterface::assign_interfaces(
-      std::move(command_interfaces), std::move(state_interfaces));
-
-  auto command_it = command_interfaces.begin();
-  auto state_it = state_interfaces.begin();
-
-  for (auto it = initial_interfaces_.begin(); it != initial_interfaces_.end(); ++it) {
-    if (it >= actions_begin_ && it < actions_end_) {
-      command_it->
-    } else {
-
-    }
-  }
 }
 
 controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
     const rclcpp_lifecycle::State & /* previous_state */) {
-  // Reserve space for interfaces buffer
-  interfaces_rt_.initRT(initial_interfaces_);
+
+  actions_.resize(num_actions_, std::numeric_limits<double>::quiet_NaN());
+  observations_.resize(num_observations_,
+                       std::numeric_limits<double>::quiet_NaN());
 
   // Configure tensors
   actions_shape_ = {static_cast<int64_t>(num_observations_)};
-  actions_ = Ort::Value::CreateTensor<double>(allocator_, actions_shape_.data(),
-                                              actions_shape_.size());
+  actions_tensor_ = Ort::Value::CreateTensor<double>(
+      allocator_, actions_shape_.data(), actions_shape_.size());
   observations_shape_ = {static_cast<int64_t>(num_observations_)};
-  observations_ = Ort::Value::CreateTensor<double>(
+  observations_tensor_ = Ort::Value::CreateTensor<double>(
       allocator_, observations_shape_.data(), observations_shape_.size());
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
-std::vector<hardware_interface::CommandInterface> ONNXRuntimeController::on_export_reference_interfaces() {
+std::vector<hardware_interface::CommandInterface>
+ONNXRuntimeController::on_export_reference_interfaces() {
+  // TODO: Switch to using shared pointers to interfaces w/
+  // on_export_reference_interfaces_list in future ros2_control version
+
   std::vector<hardware_interface::CommandInterface> interfaces;
-  for (const auto &interface_name : reference_interfaces_) {
-    bool in_observations = std::find(observations_interfaces_.begin(),
-                                     observations_interfaces_.end(), interface_name) !=
-                           observations_interfaces_.end();
 
-    auto interface = hardware_interface::CommandInterface(
-        interface_name, hardware_interface::HW_IF_VELOCITY, in_observations ?  : &unused_reference_interface_);
+  for (size_t i = 0; i < joint_names_.size(); ++i) {
+    const auto &joint_name = joint_names_[i];
 
-    interfaces.emplace_back();
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    interfaces.emplace_back(hardware_interface::CommandInterface(
+        joint_name, actions_interface_, &actions_[i]));
+#pragma GCC diagnostic pop
+  }
+
+  references_.resize(references_interface_names_.size(),
+                     std::numeric_limits<double>::quiet_NaN());
+
+  for (size_t i = 0; i < references_interface_names_.size(); ++i) {
+    const auto &interface_name = references_interface_names_[i];
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    interfaces.emplace_back(hardware_interface::CommandInterface(
+        get_node()->get_name(), interface_name, &references_[i]));
+#pragma GCC diagnostic pop
   }
   return interfaces;
 }
 
+controller_interface::CallbackReturn ONNXRuntimeController::on_activate(
+    const rclcpp_lifecycle::State & /*previous_state*/) {
+  return controller_interface::CallbackReturn::SUCCESS;
+}
+
+controller_interface::CallbackReturn ONNXRuntimeController::on_deactivate(
+    const rclcpp_lifecycle::State & /*previous_state*/) {
+  return controller_interface::CallbackReturn::SUCCESS;
+}
+
+controller_interface::CallbackReturn ONNXRuntimeController::on_cleanup(
+    const rclcpp_lifecycle::State & /*previous_state*/) {
+  return controller_interface::CallbackReturn::SUCCESS;
+}
+
+controller_interface::CallbackReturn
+ONNXRuntimeController::on_error(const rclcpp_lifecycle::State & /*previous_state*/) {
+  return controller_interface::CallbackReturn::SUCCESS;
+}
+
+bool ONNXRuntimeController::on_set_chained_mode(bool /*chained*/) { return true; }
+
+controller_interface::return_type
+ONNXRuntimeController::update_reference_from_subscribers(
+    const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/) {
+  return controller_interface::return_type::OK;
+}
+
+controller_interface::return_type
+ONNXRuntimeController::update_and_write_commands(
+    const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/) {
+  return controller_interface::return_type::OK;
+}
+
 } // namespace onnxruntime_controller
+
+#include "pluginlib/class_list_macros.hpp"
+
+PLUGINLIB_EXPORT_CLASS(onnxruntime_controller::ONNXRuntimeController,
+                       controller_interface::ChainableControllerInterface)
