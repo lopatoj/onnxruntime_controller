@@ -2,7 +2,7 @@
   <class
     name="onnxruntime_controller/ONNXRuntimeController"
     type="onnxruntime_controller::ONNXRuntimeController"
-    base_class_type="controller_interface::ControllerInterface"
+    base_class_type="controller_interface::ChainableControllerInterface"
   >
     <description>
       A generic ros2_control controller for ONNX Runtime inference

@@ -1,0 +1,37 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 1
+    handle_exceptions: false
+
+
+    onnxruntime_controller:
+      type: onnxruntime_controller/ONNXRuntimeController
+
+onnxruntime_controller:
+  ros__parameters:
+    observation_interfaces:
+      [
+        "imu/linear_acceleration",
+        "imu/angular_velocity",
+        "last_action",
+        "position",
+        "velocity",
+        "linear.x",
+        "linear.y",
+        "angular.z",
+      ]
+    observation_types:
+      [
+        "geometry_msgs/msg/Vector3",
+        "geometry_msgs/msg/Vector3",
+        "float64",
+        "float64",
+        "float64",
+        "float64",
+        "float64",
+        "float64",
+      ]
+    actions_interface: "position"
+    reference_interfaces: ["linear", "angular"]
+    reference_types: ["geometry_msgs/msg/Vector3", "geometry_msgs/msg/Vector3"]
+    joint_names: ["hip", "thigh"]

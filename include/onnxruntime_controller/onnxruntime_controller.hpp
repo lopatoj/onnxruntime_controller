@@ -2,9 +2,11 @@
 #define ONNXRUNTIME_CONTROLLER__ONNXRUNTIME_CONTROLLER_HPP_
 
 #include <controller_interface/controller_interface_base.hpp>
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <rclcpp/generic_subscription.hpp>
+#include <rclcpp/serialized_message.hpp>
 #include <string>
 #include <vector>
 
@@ -20,28 +22,20 @@
 #include "rosidl_typesupport_introspection_cpp/field_types.hpp"
 #include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
 
+
 #include "onnxruntime_cxx_api.h"
 
 #include "onnxruntime_controller/onnxruntime_controller_parameters.hpp"
+
+#include "onnxruntime_controller/typed_interface.hpp"
 
 namespace onnxruntime_controller {
 /// Constant defining last action interface name
 constexpr char HW_IF_LAST_ACTION[] = "last_action";
 
-const std::map<std::string, std::string> message_to_hw_if = {
-    {"geometry_msgs/msg/Pose", hardware_interface::HW_IF_POSITION},
-    {"geometry_msgs/msg/Pose2D", hardware_interface::HW_IF_POSITION},
-    {"geometry_msgs/msg/Twist", hardware_interface::HW_IF_VELOCITY},
-    {"geometry_msgs/msg/Accel", hardware_interface::HW_IF_ACCELERATION},
-    {"geometry_msgs/msg/Wrench", hardware_interface::HW_IF_EFFORT},
-    {"geometry_msgs/msg/Point", hardware_interface::HW_IF_POSITION},
-    {"geometry_msgs/msg/Quaternion", hardware_interface::HW_IF_POSITION},
-};
-
 const std::array<std::string, 5> valid_joint_interfaces = {
     hardware_interface::HW_IF_POSITION, hardware_interface::HW_IF_VELOCITY,
-    hardware_interface::HW_IF_EFFORT, hardware_interface::HW_IF_ACCELERATION,
-    HW_IF_LAST_ACTION};
+    hardware_interface::HW_IF_EFFORT, hardware_interface::HW_IF_ACCELERATION};
 
 class ONNXRuntimeController
     : public controller_interface::ChainableControllerInterface {
@@ -69,6 +63,7 @@ public:
 protected:
   std::vector<hardware_interface::CommandInterface>
   on_export_reference_interfaces() override;
+
   bool on_set_chained_mode(bool chained) override;
 
   controller_interface::return_type
@@ -108,24 +103,24 @@ private:
   size_t num_actions_ = 0;
   size_t num_observations_ = 0;
 
-  std::vector<std::string> observations_interface_names_;
-  std::vector<std::string> actions_interface_names_;
-  std::vector<std::string> references_interface_names_;
+  std::vector<std::string> observation_interface_names_;
+  std::vector<std::string> action_interface_names_;
+  std::vector<std::string> reference_interface_names_;
 
   std::vector<double> observations_;
+  std::vector<size_t> reference_indices_;
+  std::vector<size_t> last_actions_indices_;
+  std::vector<size_t> state_indices_;
+
   std::vector<double> actions_;
-  std::vector<double> references_;
 
-  realtime_tools::RealtimeBuffer<std::vector<double>> observations_rt_;
-  realtime_tools::RealtimeBuffer<std::vector<double>> actions_rt_;
-  realtime_tools::RealtimeBuffer<std::vector<double>> references_rt_;
+  std::vector<std::shared_ptr<TypedSubscriptionInterface>> references_;
 
-  std::vector<rclcpp::GenericSubscription::SharedPtr> subscriptions_;
-
-  Ort::Env env_;
-  Ort::Session session_;
-  Ort::Allocator allocator_;
-  Ort::IoBinding io_binding_;
+  std::string model_path_;
+  std::unique_ptr<Ort::Env> env_;
+  std::unique_ptr<Ort::Session> session_;
+  std::unique_ptr<Ort::AllocatorWithDefaultOptions> allocator_;
+  std::unique_ptr<Ort::IoBinding> io_binding_;
 
   Ort::Value observations_tensor_;
   std::array<int64_t, 1> observations_shape_;

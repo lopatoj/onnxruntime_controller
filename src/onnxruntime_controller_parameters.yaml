@@ -1,12 +1,12 @@
 onnxruntime_controller:
-  observations_interfaces:
+  observation_interfaces:
     {
       type: "string_array",
       description: "The names and order of the interfaces to use for observations.",
       default_value: [],
       read_only: true,
     }
-  observations_types:
+  observation_types:
     {
       type: "string_array",
       description: "The ROS2 message types of observation interfaces.",
@@ -32,6 +32,13 @@ onnxruntime_controller:
       type: "string_array",
       description: "The ROS2 message types of reference interfaces.",
       default_value: [],
+      read_only: true,
+    }
+  reference_timeout:
+    {
+      type: "double",
+      description: "The timeout for reference interface updates, in seconds.",
+      default_value: 0.5,
       read_only: true,
     }
   joint_names:

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.8)
 project(onnxruntime_controller)
 
+find_package(ros2_control_cmake REQUIRED)
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -22,6 +23,7 @@ generate_parameter_library(onnxruntime_controller_parameters
 
 add_library(${PROJECT_NAME} SHARED
   src/onnxruntime_controller.cpp
+  src/typed_interface.cpp
 )
 target_compile_features(onnxruntime_controller PUBLIC cxx_std_17)
 target_include_directories(onnxruntime_controller PUBLIC
@@ -41,12 +43,16 @@ pluginlib_export_plugin_description_file(
 
 install(
   DIRECTORY include/
-  DESTINATION include/onnxruntime_controller
+  DESTINATION include/${PROJECT_NAME}
 )
 
 install(
-  TARGETS onnxruntime_controller
-  onnxruntime_controller_parameters
+  DIRECTORY config launch urdf models
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(
+  TARGETS onnxruntime_controller onnxruntime_controller_parameters
   EXPORT export_onnxruntime_controller
   RUNTIME DESTINATION bin
   ARCHIVE DESTINATION lib
