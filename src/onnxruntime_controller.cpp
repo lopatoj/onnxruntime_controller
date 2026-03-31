@@ -20,8 +20,7 @@
 
 namespace onnxruntime_controller {
 
-ONNXRuntimeController::ONNXRuntimeController()
-    : session_(nullptr) {}
+ONNXRuntimeController::ONNXRuntimeController() : session_(nullptr) {}
 
 std::tuple<std::vector<std::string>, controller_interface::CallbackReturn>
 ONNXRuntimeController::process_interface(std::string interface_name,
