@@ -1,24 +1,23 @@
 controller_manager:
   ros__parameters:
-    update_rate: 1
-    handle_exceptions: false
-
+    update_rate: 5
 
     onnxruntime_controller:
       type: onnxruntime_controller/ONNXRuntimeController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
 
 onnxruntime_controller:
   ros__parameters:
     observation_interfaces:
       [
-        "imu/linear_acceleration",
         "imu/angular_velocity",
-        "last_action",
+        "imu/linear_acceleration",
+        "linear.y",
         "position",
         "velocity",
-        "linear.x",
-        "linear.y",
-        "angular.z",
+        "last_action",
       ]
     observation_types:
       [
@@ -28,10 +27,18 @@ onnxruntime_controller:
         "float64",
         "float64",
         "float64",
-        "float64",
-        "float64",
       ]
+    observation_scales: [1.0, 1.0, 1.0, 1.0, 0.05, 1.0]
     actions_interface: "position"
+    joint_names: ["hip", "thigh"]
+    action_scale: 0.25
+    clip_actions: 100.0
+    action_offsets: [0.0, 0.0]
     reference_interfaces: ["linear", "angular"]
     reference_types: ["geometry_msgs/msg/Vector3", "geometry_msgs/msg/Vector3"]
-    joint_names: ["hip", "thigh"]
+
+joint_state_broadcaster:
+  ros__parameters:
+    joints:
+      - hip
+      - thigh

@@ -20,7 +20,8 @@
 
 namespace onnxruntime_controller {
 
-ONNXRuntimeController::ONNXRuntimeController() {}
+ONNXRuntimeController::ONNXRuntimeController()
+    : session_(nullptr) {}
 
 std::tuple<std::vector<std::string>, controller_interface::CallbackReturn>
 ONNXRuntimeController::process_interface(std::string interface_name,
@@ -48,8 +49,7 @@ ONNXRuntimeController::process_interface(std::string interface_name,
     for (auto i = 0U; i < num_actions_; ++i) {
       last_actions_indices_.push_back(curr + i);
     }
-    observations_.resize(observations_.size() + num_actions_,
-                         std::numeric_limits<double>::quiet_NaN());
+    observations_.resize(observations_.size() + num_actions_, 0.0f);
     return {std::vector<std::string>(),
             controller_interface::CallbackReturn::SUCCESS};
   }
@@ -150,7 +150,10 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
   }
 
   if (params_.observation_interfaces.size() !=
-      params_.observation_types.size()) {
+          params_.observation_types.size() ||
+      (params_.observation_interfaces.size() !=
+           params_.observation_scales.size() &&
+       !params_.observation_scales.empty())) {
     RCLCPP_ERROR(get_node()->get_logger(),
                  "Observation interfaces and types must have the same size.");
     return controller_interface::CallbackReturn::ERROR;
@@ -169,6 +172,13 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
   if (params_.reference_interfaces.size() != params_.reference_types.size()) {
     RCLCPP_ERROR(get_node()->get_logger(),
                  "Reference interfaces and types must have the same size.");
+    return controller_interface::CallbackReturn::ERROR;
+  }
+
+  if (params_.action_offsets.size() != params_.joint_names.size() &&
+      !params_.action_offsets.empty()) {
+    RCLCPP_ERROR(get_node()->get_logger(),
+                 "Action offsets and joint names must have the same size.");
     return controller_interface::CallbackReturn::ERROR;
   }
 
@@ -192,7 +202,14 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
   actions_interface_ = params_.actions_interface;
   action_interface_names_ = actions_interface_names;
   num_actions_ = action_interface_names_.size();
-  actions_.resize(num_actions_, std::numeric_limits<double>::quiet_NaN());
+  actions_.resize(num_actions_, 0.0);
+  clip_actions_ = params_.clip_actions == 0.0
+                      ? std::numeric_limits<float>::infinity()
+                      : params_.clip_actions;
+  action_offsets_ = params_.action_offsets.empty()
+                        ? std::vector<double>(num_actions_, 0.0)
+                        : params_.action_offsets;
+  actions_scale_ = params_.actions_scale;
 
   // Specify state and reference interfaces
   for (auto i = 0U; i < params_.reference_interfaces.size(); ++i) {
@@ -241,41 +258,46 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
       return ret2;
     }
     for (const auto &interface : interfaces) {
-      if (std::find(reference_interface_names_.begin(),
-                    reference_interface_names_.end(),
-                    interface) != reference_interface_names_.end()) {
-        reference_indices_.push_back(observations_.size());
-        observations_.resize(observations_.size() + 1,
-                             std::numeric_limits<double>::quiet_NaN());
+      std::vector<std::string>::iterator reference_index =
+          std::find(reference_interface_names_.begin(),
+                    reference_interface_names_.end(), interface);
+      if (reference_index != reference_interface_names_.end()) {
+        reference_indices_[reference_index -
+                           reference_interface_names_.begin()] =
+            observations_.size();
+        observations_.resize(observations_.size() + 1, 0.0f);
       } else {
         state_indices_.push_back(observations_.size());
-        observations_.resize(observations_.size() + 1,
-                             std::numeric_limits<double>::quiet_NaN());
+        observations_.resize(observations_.size() + 1, 0.0f);
         observation_interface_names_.push_back(interface);
       }
+      observation_scales_.push_back(params_.observation_scales.empty()
+                                        ? 1.0
+                                        : params_.observation_scales[i]);
     }
   }
 
   num_observations_ = observations_.size();
 
-  env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING);
-  session_ = std::make_unique<Ort::Session>(*env_, model_path_.c_str(),
-                                            Ort::SessionOptions{});
-  allocator_ = std::make_unique<Ort::AllocatorWithDefaultOptions>();
+  OrtCUDAProviderOptions cuda_options;
+  cuda_options.device_id = 0;
+
+  Ort::SessionOptions options;
+  options.AppendExecutionProvider_CUDA(cuda_options);
+
+  env_ = Ort::Env(ORT_LOGGING_LEVEL_WARNING);
+  session_ = Ort::Session(env_, model_path_.c_str(), options);
+  allocator_ = Ort::AllocatorWithDefaultOptions();
 
   // Configure tensors
-  actions_shape_ = {static_cast<int64_t>(num_actions_)};
-  actions_tensor_ = Ort::Value::CreateTensor<double>(
-      allocator_->GetInfo(), actions_.data(), num_actions_,
+  actions_shape_ = {1, static_cast<int64_t>(num_actions_)};
+  actions_tensor_ = Ort::Value::CreateTensor<float>(
+      allocator_.GetInfo(), actions_.data(), num_actions_,
       actions_shape_.data(), actions_shape_.size());
-  observations_shape_ = {static_cast<int64_t>(num_observations_)};
-  observations_tensor_ = Ort::Value::CreateTensor<double>(
-      allocator_->GetInfo(), observations_.data(), num_observations_,
+  observations_shape_ = {1, static_cast<int64_t>(num_observations_)};
+  observations_tensor_ = Ort::Value::CreateTensor<float>(
+      allocator_.GetInfo(), observations_.data(), num_observations_,
       observations_shape_.data(), observations_shape_.size());
-
-  io_binding_ = std::make_unique<Ort::IoBinding>(*session_);
-  io_binding_->BindInput("observations", observations_tensor_);
-  io_binding_->BindOutput("actions", actions_tensor_);
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -337,32 +359,43 @@ ONNXRuntimeController::update_reference_from_subscribers(
 controller_interface::return_type
 ONNXRuntimeController::update_and_write_commands(
     const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/) {
-  for (auto i = 0U; i < reference_indices_.size(); ++i) {
-    observations_[reference_indices_[i]] = reference_interfaces_[i];
+  for (auto [r_idx, o_idx] : reference_indices_) {
+    observations_[o_idx] =
+        reference_interfaces_[r_idx] * observation_scales_[o_idx];
   }
 
   for (auto i = 0U; i < state_indices_.size(); ++i) {
+    auto index = state_indices_[i];
     auto state_op = state_interfaces_[i].get_optional();
     if (state_op.has_value()) {
-      observations_[state_indices_[i]] = state_op.value();
+      observations_[index] = state_op.value() * observation_scales_[index];
     }
   }
 
   for (auto i = 0U; i < last_actions_indices_.size(); ++i) {
-    observations_[last_actions_indices_[i]] = actions_[i];
+    auto index = last_actions_indices_[i];
+    observations_[index] = std::isfinite(actions_[i])
+                               ? actions_[i] * observation_scales_[index]
+                               : 0.0f;
   }
 
-  session_->Run(Ort::RunOptions{}, *io_binding_);
+  session_.Run(Ort::RunOptions{}, input_names_, &observations_tensor_, 1,
+               output_names_, &actions_tensor_, 1);
 
-  bool set_actions = true;
   for (auto i = 0U; i < actions_.size(); ++i) {
-    set_actions &= command_interfaces_[i].set_value(actions_[i]);
+    RCLCPP_INFO(get_node()->get_logger(), "Action %u: %f", i, actions_[i]);
   }
 
-  if (!set_actions) {
-    RCLCPP_DEBUG_EXPRESSION(
-        get_node()->get_logger(), !set_actions,
-        "Unable to set an actions command interface. :(");
+  bool actions_set = true;
+  for (auto i = 0U; i < actions_.size(); ++i) {
+    actions_[i] = std::clamp(actions_[i], -clip_actions_, clip_actions_);
+    actions_set &= command_interfaces_[i].set_value(
+        (actions_[i] * actions_scale_) + action_offsets_[i]);
+  }
+
+  if (!actions_set) {
+    RCLCPP_DEBUG_EXPRESSION(get_node()->get_logger(), !actions_set,
+                            "Unable to set an actions command interface. :(");
   }
 
   return controller_interface::return_type::OK;

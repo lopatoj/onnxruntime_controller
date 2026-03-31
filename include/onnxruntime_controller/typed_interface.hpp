@@ -1,5 +1,6 @@
 #include <controller_interface/controller_interface_base.hpp>
 #include <hardware_interface/handle.hpp>
+#include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include <realtime_tools/realtime_buffer.hpp>
 #include <rosidl_runtime_c/message_type_support_struct.h>
@@ -19,11 +20,15 @@ public:
   controller_interface::CallbackReturn status() const;
 
 protected:
+  rosidl_message_type_support_t *
+  get_type_support_handle(std::string ts_library, std::string type,
+                          std::shared_ptr<rcpputils::SharedLibrary> &library);
+
   std::shared_ptr<rclcpp_lifecycle::LifecycleNode> node_;
 
-  rosidl_message_type_support_t ts_;
+  rosidl_message_type_support_t ts_members_;
   const rosidl_typesupport_introspection_cpp::MessageMembers *members_;
-  std::shared_ptr<rcpputils::SharedLibrary> library_;
+  std::shared_ptr<rcpputils::SharedLibrary> library_members_;
 
   std::string name_;
   std::vector<std::string> field_names_;
@@ -45,8 +50,7 @@ public:
 
   controller_interface::return_type update_from_subscriber();
 
-  std::vector<hardware_interface::CommandInterface>
-  get_interfaces();
+  std::vector<hardware_interface::CommandInterface> get_interfaces();
 
 protected:
   void callback(const std::shared_ptr<rclcpp::SerializedMessage> &msg);
@@ -54,12 +58,15 @@ protected:
 private:
   void cleanup();
 
-  void *message_memory_;
+  void *msg_;
   rcutils_allocator_t allocator_;
   rclcpp::Duration timeout_;
 
+  std::unique_ptr<rclcpp::SerializationBase> serializer_;
+  const rosidl_message_type_support_t *ts_serializer_;
+  std::shared_ptr<rcpputils::SharedLibrary> library_serializer_;
+
   rclcpp::GenericSubscription::SharedPtr sub_;
-  rclcpp::SerializedMessage msg_;
   realtime_tools::RealtimeBuffer<std::vector<double>> values_rt_;
   std::vector<double> &values_;
   size_t start_index_;

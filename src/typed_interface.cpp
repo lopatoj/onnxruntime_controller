@@ -4,36 +4,47 @@
 #include <controller_interface/controller_interface_base.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <rcl/types.h>
 #include <rclcpp/duration.hpp>
 #include <rclcpp/qos.hpp>
+#include <rclcpp/serialization.hpp>
 #include <rcpputils/find_library.hpp>
 #include <rcpputils/shared_library.hpp>
 
 #include <rosidl_typesupport_introspection_cpp/message_introspection.hpp>
+#include <utility>
 
 namespace onnxruntime_controller {
+
+rosidl_message_type_support_t *TypedInterface::get_type_support_handle(
+    std::string ts_library, std::string type,
+    std::shared_ptr<rcpputils::SharedLibrary> &library) {
+  auto package_name = type.substr(0, type.find('/'));
+  auto message_name = type.substr(type.rfind('/') + 1);
+  auto library_path =
+      rcpputils::find_library_path(package_name + "__" + ts_library);
+  library = std::make_shared<rcpputils::SharedLibrary>(library_path);
+  auto symbol_name = ts_library + "__get_message_type_support_handle__" +
+                     package_name + "__msg__" + message_name;
+  auto get_ts_handle =
+      reinterpret_cast<rosidl_message_type_support_t *(*)(void)>(
+          library->get_symbol(symbol_name.c_str()));
+  return get_ts_handle();
+}
+
 TypedInterface::TypedInterface(
     std::shared_ptr<rclcpp_lifecycle::LifecycleNode> node, std::string name,
     std::string type)
     : node_(node),
-      ts_(::rosidl_get_zero_initialized_message_type_support_handle()),
+      ts_members_(::rosidl_get_zero_initialized_message_type_support_handle()),
       members_(nullptr), name_(name) {
-  auto package_name = type.substr(0, type.find('/'));
-  auto message_name = type.substr(type.rfind('/') + 1);
-  auto library_path = rcpputils::find_library_path(
-      package_name + "__rosidl_typesupport_introspection_cpp");
-  library_ = std::make_shared<rcpputils::SharedLibrary>(library_path);
-  auto symbol_name = "rosidl_typesupport_introspection_cpp__get_message_type_"
-                     "support_handle__" +
-                     package_name + "__msg__" + message_name;
-  auto get_ts_handle =
-      reinterpret_cast<rosidl_message_type_support_t *(*)(void)>(
-          library_->get_symbol(symbol_name.c_str()));
-  ts_ = *get_ts_handle();
+  ts_members_ = *get_type_support_handle("rosidl_typesupport_introspection_cpp",
+                                         type, library_members_);
 
   members_ =
       static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
-          ts_.data);
+          ts_members_.data);
 
   for (size_t i = 0; i < members_->member_count_; ++i) {
     auto member = members_->members_[i];
@@ -45,11 +56,13 @@ TypedInterface::TypedInterface(
             rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING) {
       RCLCPP_ERROR(node_->get_logger(),
                    "Array, string or message field type not supported for "
-                   "interface: %s/%s",
+                   "interface: %s.%s",
                    name.c_str(), member.name_);
       status_ = controller_interface::CallbackReturn::ERROR;
       return;
     } else {
+      RCLCPP_ERROR(node_->get_logger(), "interface: %s.%s", name.c_str(),
+                   member.name_);
       field_names_.push_back(std::string(member.name_));
       interface_names_.push_back(name + "." + std::string(member.name_));
       interface_offsets_.push_back(member.offset_);
@@ -70,16 +83,19 @@ TypedSubscriptionInterface::TypedSubscriptionInterface(
     return;
   }
 
-  allocator_ = rcutils_get_default_allocator();
-  message_memory_ = allocator_.allocate(members_->size_of_, allocator_.state);
+  ts_serializer_ = get_type_support_handle("rosidl_typesupport_cpp", type,
+                                           library_serializer_);
+  serializer_ = std::make_unique<rclcpp::SerializationBase>(ts_serializer_);
 
-  if (!message_memory_) {
+  allocator_ = rcutils_get_default_allocator();
+  msg_ = allocator_.allocate(members_->size_of_, allocator_.state);
+
+  if (!msg_) {
     status_ = controller_interface::CallbackReturn::ERROR;
     return;
   }
 
-  members_->init_function(message_memory_,
-                          rosidl_runtime_cpp::MessageInitialization::ALL);
+  members_->init_function(msg_, rosidl_runtime_cpp::MessageInitialization::ALL);
 
   sub_ = node_->create_generic_subscription(
       "~/" + name, type, rclcpp::SystemDefaultsQoS(),
@@ -88,23 +104,18 @@ TypedSubscriptionInterface::TypedSubscriptionInterface(
 
   start_index_ = values_.size();
   values.resize(start_index_ + interface_names_.size(),
-                std::numeric_limits<double>::quiet_NaN());
+                0.0f);
 }
 
 TypedSubscriptionInterface::~TypedSubscriptionInterface() { cleanup(); }
 
 void TypedSubscriptionInterface::callback(
     const std::shared_ptr<rclcpp::SerializedMessage> &msg) {
-  auto rcl_serialized_msg = msg->get_rcl_serialized_message();
-  rmw_ret_t ret = rmw_deserialize(&rcl_serialized_msg, &ts_, message_memory_);
-
-  if (ret != RMW_RET_OK) {
-    cleanup();
-    return;
-  }
+  serializer_->deserialize_message(msg.get(), msg_);
 
   std::vector<double> values;
-  uint8_t *base_ptr = static_cast<uint8_t *>(message_memory_);
+  values.resize(interface_offsets_.size(), 0.0f);
+  uint8_t *base_ptr = static_cast<uint8_t *>(msg_);
   for (size_t i = 0; i < interface_offsets_.size(); ++i) {
     values[i] = *reinterpret_cast<double *>(base_ptr + interface_offsets_[i]);
   }
@@ -131,15 +142,15 @@ TypedSubscriptionInterface::get_interfaces() {
 
 void TypedSubscriptionInterface::reset() {
   values_ = std::vector<double>(interface_offsets_.size(),
-                                std::numeric_limits<double>::quiet_NaN());
+                                0.0f);
   values_rt_.writeFromNonRT(values_);
 }
 
 void TypedSubscriptionInterface::cleanup() {
-  if (message_memory_) {
-    members_->fini_function(message_memory_);
-    allocator_.deallocate(message_memory_, allocator_.state);
-    message_memory_ = nullptr;
+  if (msg_) {
+    members_->fini_function(msg_);
+    allocator_.deallocate(msg_, allocator_.state);
+    msg_ = nullptr;
   }
 }
 

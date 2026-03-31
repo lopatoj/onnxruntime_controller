@@ -64,11 +64,21 @@ def generate_launch_description():
             "/controller_manager",
         ],
     )
+    joint_state_broadcaster = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "joint_state_broadcaster",
+            "--controller-manager",
+            "/controller_manager",
+        ],
+    )
 
     nodes = [
         control_node,
         robot_state_pub_node,
         onnx_spawner,
+        joint_state_broadcaster,
     ]
 
     return LaunchDescription(nodes)

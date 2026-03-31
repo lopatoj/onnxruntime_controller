@@ -22,7 +22,6 @@
 #include "rosidl_typesupport_introspection_cpp/field_types.hpp"
 #include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
 
-
 #include "onnxruntime_cxx_api.h"
 
 #include "onnxruntime_controller/onnxruntime_controller_parameters.hpp"
@@ -76,14 +75,14 @@ protected:
 
 private:
   /**
-   * @brief Processes an interface (either reference or action) and returns the
-   *        corresponding interface field names.
+   * @brief Processes an interface (either reference, action, or observation)
+   * and returns the corresponding interface field names.
    *
    * @param interface_name The name of the interface to process.
    * @param interface_type The type of the interface (e.g., "position",
    * "velocity").
    * @param is_reference_interface Whether the interface is a reference
-   * interface, to create subscribers.
+   * interface, to create a subscriber via TypedSubscriptionInterface.
    * @return A tuple containing the interface names and the callback return
    * status.
    */
@@ -91,42 +90,53 @@ private:
   process_interface(std::string interface_name, std::string interface_type,
                     bool is_reference_interface);
 
+  /**
+   * @brief Validates an interface name for correctness.
+   *
+   * @param interface_name The name of the interface to validate.
+   * @return A callback return status indicating success or failure.
+   */
   controller_interface::CallbackReturn
   validate_interface_name(std::string &interface_name);
 
   std::shared_ptr<onnxruntime_controller::ParamListener> param_listener_;
   onnxruntime_controller::Params params_;
 
-  std::string actions_interface_;
-  std::vector<std::string> joint_names_;
-
-  size_t num_actions_ = 0;
-  size_t num_observations_ = 0;
-
   std::vector<std::string> observation_interface_names_;
   std::vector<std::string> action_interface_names_;
   std::vector<std::string> reference_interface_names_;
 
-  std::vector<double> observations_;
-  std::vector<size_t> reference_indices_;
-  std::vector<size_t> last_actions_indices_;
-  std::vector<size_t> state_indices_;
-
-  std::vector<double> actions_;
+  size_t num_observations_ = 0;
+  size_t num_actions_ = 0;
 
   std::vector<std::shared_ptr<TypedSubscriptionInterface>> references_;
 
   std::string model_path_;
-  std::unique_ptr<Ort::Env> env_;
-  std::unique_ptr<Ort::Session> session_;
-  std::unique_ptr<Ort::AllocatorWithDefaultOptions> allocator_;
-  std::unique_ptr<Ort::IoBinding> io_binding_;
+  Ort::Env env_;
+  Ort::Session session_;
+  Ort::AllocatorWithDefaultOptions allocator_;
+  const char *input_names_[1]{"obs"};
+  const char *output_names_[1]{"actions"};
 
+  std::vector<float> observations_;
   Ort::Value observations_tensor_;
-  std::array<int64_t, 1> observations_shape_;
+  std::array<int64_t, 2> observations_shape_;
 
+  std::map<size_t, size_t> reference_indices_;
+  std::vector<size_t> last_actions_indices_;
+  std::vector<size_t> state_indices_;
+
+  std::vector<double> observation_scales_;
+
+  std::vector<float> actions_;
   Ort::Value actions_tensor_;
-  std::array<int64_t, 1> actions_shape_;
+  std::array<int64_t, 2> actions_shape_;
+
+  std::string actions_interface_;
+  std::vector<std::string> joint_names_;
+  double actions_scale_;
+  float clip_actions_;
+  std::vector<double> action_offsets_;
 };
 
 } // namespace onnxruntime_controller

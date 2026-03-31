@@ -13,11 +13,39 @@ onnxruntime_controller:
       default_value: [],
       read_only: true,
     }
+  observation_scales:
+    {
+      type: "double_array",
+      description: "The scales for each observation interface.",
+      default_value: [],
+      read_only: true,
+    }
   actions_interface:
     {
       type: "string",
       description: "The joint command_interface name for actions.",
       default_value: "position",
+      read_only: true,
+    }
+  actions_scale:
+    {
+      type: "double",
+      description: "The scale to apply to all actions interfaces.",
+      default_value: 1.0,
+      read_only: true,
+    }
+  action_offsets:
+    {
+      type: "double_array",
+      description: "The offset to apply to each action interface.",
+      default_value: [],
+      read_only: true,
+    }
+  clip_actions:
+    {
+      type: "double",
+      description: "Threshold to clip the absolute value of actions.",
+      default_value: 0.0,
       read_only: true,
     }
   reference_interfaces:
