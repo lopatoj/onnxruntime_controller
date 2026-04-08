@@ -8,7 +8,6 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(onnxruntime_vendor REQUIRED)
 find_package(controller_interface REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -16,6 +15,7 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 find_package(rosidl_typesupport_introspection_cpp REQUIRED)
+find_package(realtime_tools REQUIRED)
 
 generate_parameter_library(onnxruntime_controller_parameters
   src/onnxruntime_controller_parameters.yaml
