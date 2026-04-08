@@ -347,8 +347,7 @@ bool ONNXRuntimeController::on_set_chained_mode(bool /*chained*/) {
 }
 
 controller_interface::return_type
-ONNXRuntimeController::update_reference_from_subscribers(
-    const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/) {
+ONNXRuntimeController::update_reference_from_subscribers() {
   for (auto &reference : references_) {
     reference->update_from_subscriber();
   }
@@ -365,10 +364,7 @@ ONNXRuntimeController::update_and_write_commands(
 
   for (auto i = 0U; i < state_indices_.size(); ++i) {
     auto index = state_indices_[i];
-    auto state_op = state_interfaces_[i].get_optional();
-    if (state_op.has_value()) {
-      observations_[index] = state_op.value() * observation_scales_[index];
-    }
+    observations_[index] = state_interfaces_[i].get_value() * observation_scales_[index];
   }
 
   for (auto i = 0U; i < last_actions_indices_.size(); ++i) {
@@ -385,17 +381,17 @@ ONNXRuntimeController::update_and_write_commands(
     RCLCPP_INFO(get_node()->get_logger(), "Action %u: %f", i, actions_[i]);
   }
 
-  bool actions_set = true;
+  // bool actions_set = true;
   for (auto i = 0U; i < actions_.size(); ++i) {
     actions_[i] = std::clamp(actions_[i], -clip_actions_, clip_actions_);
-    actions_set &= command_interfaces_[i].set_value(
+    command_interfaces_[i].set_value(
         (actions_[i] * actions_scale_) + action_offsets_[i]);
   }
 
-  if (!actions_set) {
-    RCLCPP_DEBUG_EXPRESSION(get_node()->get_logger(), !actions_set,
-                            "Unable to set an actions command interface. :(");
-  }
+  // if (!actions_set) {
+  //   RCLCPP_DEBUG_EXPRESSION(get_node()->get_logger(), !actions_set,
+  //                           "Unable to set an actions command interface. :(");
+  // }
 
   return controller_interface::return_type::OK;
 }

@@ -32,9 +32,8 @@ namespace onnxruntime_controller {
 /// Constant defining last action interface name
 constexpr char HW_IF_LAST_ACTION[] = "last_action";
 
-const std::array<std::string, 5> valid_joint_interfaces = {
-    hardware_interface::HW_IF_POSITION, hardware_interface::HW_IF_VELOCITY,
-    hardware_interface::HW_IF_EFFORT, hardware_interface::HW_IF_ACCELERATION};
+const std::array<std::string, 4> valid_joint_interfaces = {
+    "position", "velocity", "effort", "acceleration"};
 
 class ONNXRuntimeController
     : public controller_interface::ChainableControllerInterface {
@@ -61,13 +60,12 @@ public:
 
 protected:
   std::vector<hardware_interface::CommandInterface>
-  on_export_reference_interfaces() override;
+  on_export_reference_interfaces();
 
   bool on_set_chained_mode(bool chained) override;
 
   controller_interface::return_type
-  update_reference_from_subscribers(const rclcpp::Time &time,
-                                    const rclcpp::Duration &period) override;
+  update_reference_from_subscribers() override;
 
   controller_interface::return_type
   update_and_write_commands(const rclcpp::Time &time,
