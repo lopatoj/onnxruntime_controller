@@ -26,9 +26,6 @@ std::tuple<std::vector<std::string>, controller_interface::CallbackReturn>
 ONNXRuntimeController::process_interface(std::string interface_name,
                                          std::string interface_type,
                                          bool is_reference_interface) {
-  RCLCPP_INFO(get_node()->get_logger(), "Processing interface: %s, type: %s",
-              interface_name.c_str(), interface_type.c_str());
-
   // Invalid configuration
   if (interface_name.empty() || interface_type.empty()) {
     return {std::vector<std::string>(),
@@ -48,7 +45,8 @@ ONNXRuntimeController::process_interface(std::string interface_name,
     for (auto i = 0U; i < num_actions_; ++i) {
       last_actions_indices_.push_back(curr + i);
     }
-    observations_.resize(observations_.size() + num_actions_, 0.0f);
+    observations_.resize(observations_.size() + num_actions_,
+                         std::numeric_limits<float>::quiet_NaN());
     return {std::vector<std::string>(),
             controller_interface::CallbackReturn::SUCCESS};
   }
@@ -152,9 +150,13 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
           params_.observation_types.size() ||
       (params_.observation_interfaces.size() !=
            params_.observation_scales.size() &&
-       !params_.observation_scales.empty())) {
+       !params_.observation_scales.empty()) ||
+      (params_.observation_interfaces.size() !=
+           params_.observation_offsets.size() &&
+       !params_.observation_offsets.empty())) {
     RCLCPP_ERROR(get_node()->get_logger(),
-                 "Observation interfaces and types must have the same size.");
+                 "Observation interfaces, types, scales, and offsets must have "
+                 "compatible sizes.");
     return controller_interface::CallbackReturn::ERROR;
   }
 
@@ -233,12 +235,6 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
     reference_interface_names_.insert(reference_interface_names_.end(),
                                       interfaces.begin(), interfaces.end());
   }
-
-  for (auto i = 0U; i < reference_interface_names_.size(); ++i) {
-    RCLCPP_INFO(get_node()->get_logger(), "Reference interface: %s",
-                reference_interface_names_[i].c_str());
-  }
-
   for (auto i = 0U; i < params_.observation_interfaces.size(); ++i) {
     auto ret = validate_interface_name(params_.observation_interfaces[i]);
     if (ret != controller_interface::CallbackReturn::SUCCESS) {
@@ -273,6 +269,9 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
       observation_scales_.push_back(params_.observation_scales.empty()
                                         ? 1.0
                                         : params_.observation_scales[i]);
+      observation_offsets_.push_back(params_.observation_offsets.empty()
+                                         ? 0.0
+                                         : params_.observation_offsets[i]);
     }
   }
 
@@ -364,7 +363,9 @@ ONNXRuntimeController::update_and_write_commands(
 
   for (auto i = 0U; i < state_indices_.size(); ++i) {
     auto index = state_indices_[i];
-    observations_[index] = state_interfaces_[i].get_value() * observation_scales_[index];
+    observations_[index] =
+        (state_interfaces_[i].get_value() - observation_offsets_[index]) *
+        observation_scales_[index];
   }
 
   for (auto i = 0U; i < last_actions_indices_.size(); ++i) {
@@ -377,20 +378,22 @@ ONNXRuntimeController::update_and_write_commands(
   session_.Run(Ort::RunOptions{}, input_names_, &observations_tensor_, 1,
                output_names_, &actions_tensor_, 1);
 
-  for (auto i = 0U; i < actions_.size(); ++i) {
-    RCLCPP_INFO(get_node()->get_logger(), "Action %u: %f", i, actions_[i]);
-  }
-
   // bool actions_set = true;
   for (auto i = 0U; i < actions_.size(); ++i) {
     actions_[i] = std::clamp(actions_[i], -clip_actions_, clip_actions_);
-    command_interfaces_[i].set_value(
-        (actions_[i] * actions_scale_) + action_offsets_[i]);
+    command_interfaces_[i].set_value((actions_[i] * actions_scale_) +
+                                     action_offsets_[i]);
+  }
+
+  for (auto i = 0U; i < command_interfaces_.size(); ++i) {
+    RCLCPP_INFO(get_node()->get_logger(), "Command %u: %f", i,
+                command_interfaces_[i].get_value());
   }
 
   // if (!actions_set) {
   //   RCLCPP_DEBUG_EXPRESSION(get_node()->get_logger(), !actions_set,
-  //                           "Unable to set an actions command interface. :(");
+  //                           "Unable to set an actions command interface.
+  //                           :(");
   // }
 
   return controller_interface::return_type::OK;

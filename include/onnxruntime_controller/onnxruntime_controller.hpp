@@ -125,6 +125,7 @@ private:
   std::vector<size_t> state_indices_;
 
   std::vector<double> observation_scales_;
+  std::vector<double> observation_offsets_;
 
   std::vector<float> actions_;
   Ort::Value actions_tensor_;
