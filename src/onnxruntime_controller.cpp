@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <onnxruntime_cxx_api.h>
+#include <rclcpp/logging.hpp>
 #include <rcutils/allocator.h>
 #include <rmw/rmw.h>
 #include <rosidl_runtime_cpp/message_initialization.hpp>
@@ -48,7 +49,8 @@ ONNXRuntimeController::process_interface(std::string interface_name,
     for (auto i = 0U; i < num_actions_; ++i) {
       last_actions_indices_.push_back(curr + i);
     }
-    observations_.resize(observations_.size() + num_actions_, 0.0f);
+    observations_.resize(observations_.size() + num_actions_,
+                         std::numeric_limits<float>::quiet_NaN());
     return {std::vector<std::string>(),
             controller_interface::CallbackReturn::SUCCESS};
   }
@@ -152,9 +154,13 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
           params_.observation_types.size() ||
       (params_.observation_interfaces.size() !=
            params_.observation_scales.size() &&
-       !params_.observation_scales.empty())) {
+       !params_.observation_scales.empty()) ||
+      (params_.observation_interfaces.size() !=
+           params_.observation_offsets.size() &&
+       !params_.observation_offsets.empty())) {
     RCLCPP_ERROR(get_node()->get_logger(),
-                 "Observation interfaces and types must have the same size.");
+                 "Observation interfaces, types, scales, and offsets must have "
+                 "compatible sizes.");
     return controller_interface::CallbackReturn::ERROR;
   }
 
@@ -257,6 +263,13 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
       return ret2;
     }
     for (const auto &interface : interfaces) {
+      std::vector<std::string>::iterator action_index =
+          std::find(action_interface_names_.begin(),
+                    action_interface_names_.end(), interface);
+      if (action_index != action_interface_names_.end()) {
+        action_state_indices_.push_back(observations_.size());
+      }
+
       std::vector<std::string>::iterator reference_index =
           std::find(reference_interface_names_.begin(),
                     reference_interface_names_.end(), interface);
@@ -273,6 +286,9 @@ controller_interface::CallbackReturn ONNXRuntimeController::on_configure(
       observation_scales_.push_back(params_.observation_scales.empty()
                                         ? 1.0
                                         : params_.observation_scales[i]);
+      observation_offsets_.push_back(params_.observation_offsets.empty()
+                                         ? 0.0
+                                         : params_.observation_offsets[i]);
     }
   }
 
@@ -319,9 +335,21 @@ ONNXRuntimeController::on_export_reference_interfaces() {
 }
 
 controller_interface::CallbackReturn ONNXRuntimeController::on_activate(
-    const rclcpp_lifecycle::State &previous_state) {
-  return controller_interface::ChainableControllerInterface::on_activate(
-      previous_state);
+    const rclcpp_lifecycle::State &/*previous_state*/) {
+  bool actions_set = true;
+  for (auto i = 0U; i < num_actions_; ++i) {
+    auto state_op = state_interfaces_[action_state_indices_[i]].get_optional();
+    if (state_op.has_value()) {
+      actions_set &= command_interfaces_[i].set_value(state_op.value());
+    }
+  }
+  if (!actions_set) {
+    RCLCPP_DEBUG_EXPRESSION(get_node()->get_logger(), !actions_set,
+                            "Unable to set an actions command interface. :(");
+    return controller_interface::CallbackReturn::ERROR;
+  }
+
+  return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::CallbackReturn ONNXRuntimeController::on_deactivate(
@@ -359,15 +387,20 @@ controller_interface::return_type
 ONNXRuntimeController::update_and_write_commands(
     const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/) {
   for (auto [r_idx, o_idx] : reference_indices_) {
-    observations_[o_idx] =
-        reference_interfaces_[r_idx] * observation_scales_[o_idx];
+    auto value = reference_interfaces_[r_idx];
+    if (!std::isfinite(value)) {
+      // Reference value is not finite, skip updating this observation
+      return controller_interface::return_type::OK;
+    }
+    observations_[o_idx] = value * observation_scales_[o_idx];
   }
 
   for (auto i = 0U; i < state_indices_.size(); ++i) {
     auto index = state_indices_[i];
     auto state_op = state_interfaces_[i].get_optional();
     if (state_op.has_value()) {
-      observations_[index] = state_op.value() * observation_scales_[index];
+      observations_[index] = (state_op.value() - observation_offsets_[index]) *
+                             observation_scales_[index];
     }
   }
 
@@ -376,6 +409,14 @@ ONNXRuntimeController::update_and_write_commands(
     observations_[index] = std::isfinite(actions_[i])
                                ? actions_[i] * observation_scales_[index]
                                : 0.0f;
+  }
+
+  for(auto i = 0U; i < num_observations_; ++i) {
+    RCLCPP_INFO(
+      get_node()->get_logger(),
+      "Observation %u: %f",
+      i,
+      observations_[i]);
   }
 
   session_.Run(Ort::RunOptions{}, input_names_, &observations_tensor_, 1,

@@ -104,7 +104,7 @@ TypedSubscriptionInterface::TypedSubscriptionInterface(
 
   start_index_ = values_.size();
   values.resize(start_index_ + interface_names_.size(),
-                0.0f);
+                std::numeric_limits<double>::quiet_NaN());
 }
 
 TypedSubscriptionInterface::~TypedSubscriptionInterface() { cleanup(); }
@@ -114,7 +114,8 @@ void TypedSubscriptionInterface::callback(
   serializer_->deserialize_message(msg.get(), msg_);
 
   std::vector<double> values;
-  values.resize(interface_offsets_.size(), 0.0f);
+  values.resize(interface_offsets_.size(),
+                std::numeric_limits<double>::quiet_NaN());
   uint8_t *base_ptr = static_cast<uint8_t *>(msg_);
   for (size_t i = 0; i < interface_offsets_.size(); ++i) {
     values[i] = *reinterpret_cast<double *>(base_ptr + interface_offsets_[i]);
@@ -142,7 +143,7 @@ TypedSubscriptionInterface::get_interfaces() {
 
 void TypedSubscriptionInterface::reset() {
   values_ = std::vector<double>(interface_offsets_.size(),
-                                0.0f);
+                                std::numeric_limits<double>::quiet_NaN());
   values_rt_.writeFromNonRT(values_);
 }
 

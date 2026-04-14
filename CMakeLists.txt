@@ -8,7 +8,7 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(onnxruntime_vendor REQUIRED)
+# find_package(onnxruntime_vendor REQUIRED)
 find_package(controller_interface REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -28,7 +28,9 @@ add_library(${PROJECT_NAME} SHARED
 target_compile_features(onnxruntime_controller PUBLIC cxx_std_17)
 target_include_directories(onnxruntime_controller PUBLIC
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+  /usr/local/include/onnxruntime
+  /usr/local/include/onnxruntime/onnxruntime/core/session)
 target_link_libraries(onnxruntime_controller PUBLIC
                       onnxruntime_controller_parameters
                       controller_interface::controller_interface
@@ -36,7 +38,9 @@ target_link_libraries(onnxruntime_controller PUBLIC
                       pluginlib::pluginlib
                       rclcpp::rclcpp
                       rclcpp_lifecycle::rclcpp_lifecycle
-                      ${onnxruntime_vendor_LIBRARIES})
+                      ${onnxruntime_vendor_LIBRARIES}
+                      /usr/local/lib/libonnxruntime.so
+                      /usr/local/lib/libonnxruntime_providers_cuda.so)
 
 pluginlib_export_plugin_description_file(
   controller_interface onnxruntime_controller_plugins.xml)

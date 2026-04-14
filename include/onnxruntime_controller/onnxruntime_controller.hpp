@@ -125,8 +125,10 @@ private:
   std::map<size_t, size_t> reference_indices_;
   std::vector<size_t> last_actions_indices_;
   std::vector<size_t> state_indices_;
+  std::vector<size_t> action_state_indices_;
 
   std::vector<double> observation_scales_;
+  std::vector<double> observation_offsets_;
 
   std::vector<float> actions_;
   Ort::Value actions_tensor_;
