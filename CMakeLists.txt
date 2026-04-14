@@ -8,7 +8,6 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(onnxruntime_vendor REQUIRED)
 find_package(controller_interface REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -16,6 +15,7 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 find_package(rosidl_typesupport_introspection_cpp REQUIRED)
+find_package(realtime_tools REQUIRED)
 
 generate_parameter_library(onnxruntime_controller_parameters
   src/onnxruntime_controller_parameters.yaml
@@ -28,15 +28,21 @@ add_library(${PROJECT_NAME} SHARED
 target_compile_features(onnxruntime_controller PUBLIC cxx_std_17)
 target_include_directories(onnxruntime_controller PUBLIC
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+  /usr/local/include/onnxruntime
+  /usr/local/include/onnxruntime/onnxruntime/core/session
+)
 target_link_libraries(onnxruntime_controller PUBLIC
-                      onnxruntime_controller_parameters
-                      controller_interface::controller_interface
-                      hardware_interface::hardware_interface
-                      pluginlib::pluginlib
-                      rclcpp::rclcpp
-                      rclcpp_lifecycle::rclcpp_lifecycle
-                      ${onnxruntime_vendor_LIBRARIES})
+  onnxruntime_controller_parameters
+  controller_interface::controller_interface
+  hardware_interface::hardware_interface
+  pluginlib::pluginlib
+  rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
+  realtime_tools::realtime_tools
+  /usr/local/lib/libonnxruntime.so
+  /usr/local/lib/libonnxruntime_providers_cuda.so
+)
 
 pluginlib_export_plugin_description_file(
   controller_interface onnxruntime_controller_plugins.xml)

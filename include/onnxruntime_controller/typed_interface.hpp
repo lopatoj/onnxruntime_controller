@@ -2,10 +2,12 @@
 #include <hardware_interface/handle.hpp>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/serialization.hpp>
 #include <realtime_tools/realtime_buffer.hpp>
 #include <rosidl_runtime_c/message_type_support_struct.h>
 #include <rosidl_runtime_cpp/message_initialization.hpp>
 #include <rosidl_typesupport_introspection_cpp/field_types.hpp>
+#include <rosidl_typesupport_introspection_cpp/message_introspection.hpp>
 #include <string>
 #include <vector>
 
@@ -27,7 +29,7 @@ protected:
   std::shared_ptr<rclcpp_lifecycle::LifecycleNode> node_;
 
   rosidl_message_type_support_t ts_members_;
-  const rosidl_typesupport_introspection_cpp::MessageMembers *members_;
+  const rosidl_typesupport_introspection_cpp::MessageMembers_s *members_;
   std::shared_ptr<rcpputils::SharedLibrary> library_members_;
 
   std::string name_;

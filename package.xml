@@ -10,12 +10,12 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <build_depend>generate_parameter_library</build_depend>
 
-  <depend>onnxruntime_vendor</depend>
   <depend>controller_interface</depend>
   <depend>hardware_interface</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>
   <depend>pluginlib</depend>
+  <depend>realtime_tools</depend>
   <depend>rosidl_typesupport_introspection_cpp</depend>
 
   <test_depend>ament_lint_auto</test_depend>

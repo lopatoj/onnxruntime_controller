@@ -20,6 +20,13 @@ onnxruntime_controller:
       default_value: [],
       read_only: true,
     }
+  observation_offsets:
+    {
+      type: "double_array",
+      description: "The offsets for each observation interface.",
+      default_value: [],
+      read_only: true,
+    }
   actions_interface:
     {
       type: "string",

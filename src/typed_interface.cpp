@@ -12,6 +12,7 @@
 #include <rcpputils/find_library.hpp>
 #include <rcpputils/shared_library.hpp>
 
+
 #include <rosidl_typesupport_introspection_cpp/message_introspection.hpp>
 #include <utility>
 
@@ -37,7 +38,6 @@ TypedInterface::TypedInterface(
     std::shared_ptr<rclcpp_lifecycle::LifecycleNode> node, std::string name,
     std::string type)
     : node_(node),
-      ts_members_(::rosidl_get_zero_initialized_message_type_support_handle()),
       members_(nullptr), name_(name) {
   ts_members_ = *get_type_support_handle("rosidl_typesupport_introspection_cpp",
                                          type, library_members_);
